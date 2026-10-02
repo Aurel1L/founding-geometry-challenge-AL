@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>build123d workbench</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/three-cad-viewer@3.6.3/dist/three-cad-viewer.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header>
+    <strong>build123d workbench</strong>
+    <select id="script" title="Open another script"></select>
+    <span id="path"></span>
+    <span id="status">loading…</span>
+    <button id="save" title="Save and build (Cmd/Ctrl+S)">Save &amp; build</button>
+  </header>
+  <main>
+    <section id="editor-pane"><textarea id="editor"></textarea></section>
+    <section id="viewer-pane">
+      <div id="viewer"></div>
+      <div id="selection">
+        <div class="title">Selection <small>click a face or an edge, shift+click to add, Esc to clear</small></div>
+        <pre id="selection-list">nothing selected</pre>
+      </div>
+      <pre id="error" hidden></pre>
+    </section>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
