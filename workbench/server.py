@@ -35,6 +35,11 @@ class Workbench:
         self._lock = asyncio.Lock()
         STATE.mkdir(exist_ok=True)
         self.selection_file = STATE / "selection.json"
+        self.manual_commands_file = STATE / "manual_commands.json"
+        if self.manual_commands_file.exists():
+            self._manual_commands_by_script = json.loads(self.manual_commands_file.read_text())
+        else:
+            self._manual_commands_by_script = {}
         self.open(script)
 
     def open(self, script: Path):
@@ -52,34 +57,68 @@ class Workbench:
     def version(self) -> str:
         return hashlib.sha256(self.text().encode()).hexdigest()[:12]
 
+    def manual_commands(self) -> list[dict]:
+        return self._manual_commands_by_script.get(str(self.script), [])
+
+    def build_id(self, commands: list[dict] | None = None) -> str:
+        payload = json.dumps(
+            {"script": str(self.script), "version": self.version(), "commands": commands or self.manual_commands()},
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
     async def build(self) -> dict:
         """Run the script once per version; later calls reuse the result."""
         async with self._lock:
-            version = self.version()
-            if self._build and self._build[0] == version:
+            commands = self.manual_commands()
+            build_id = self.build_id(commands)
+            if self._build and self._build[0] == build_id:
                 return self._build[1]
-            with tempfile.TemporaryDirectory() as tmp:
-                out = Path(tmp) / "build.json"
-                try:
-                    proc = await asyncio.to_thread(
-                        subprocess.run,
-                        [sys.executable, "-m", "workbench.execute", str(self.script), str(out)],
-                        cwd=self.script.parent,
-                        env={**os.environ, "PYTHONPATH": str(ROOT)},
-                        capture_output=True,
-                        text=True,
-                        timeout=RUN_TIMEOUT,
-                    )
-                except subprocess.TimeoutExpired:
-                    result = {"ok": False, "output": "", "error": f"the build took more than {RUN_TIMEOUT} s"}
-                else:
-                    if out.exists():
-                        result = json.loads(out.read_text())
-                    else:
-                        result = {"ok": False, "output": proc.stdout, "error": proc.stderr or "the build crashed"}
-            result["version"] = version
-            self._build = (version, result)
+            result = await self._run_build(commands)
+            result["version"] = self.version()
+            result["build_id"] = build_id
+            self._build = (build_id, result)
             return result
+
+    async def apply_manual_command(self, command: dict, expected_build_id: str) -> dict:
+        async with self._lock:
+            commands = self.manual_commands()
+            if expected_build_id != self.build_id(commands):
+                raise ValueError("The displayed part changed; select the face again")
+
+            updated_commands = [*commands, command]
+            result = await self._run_build(updated_commands)
+            if not result["ok"]:
+                return result
+
+            self._manual_commands_by_script[str(self.script)] = updated_commands
+            self.manual_commands_file.write_text(json.dumps(self._manual_commands_by_script, indent=2))
+            build_id = self.build_id(updated_commands)
+            result["version"] = self.version()
+            result["build_id"] = build_id
+            self._build = (build_id, result)
+            return result
+
+    async def _run_build(self, commands: list[dict]) -> dict:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "build.json"
+            commands_file = Path(tmp) / "manual_commands.json"
+            commands_file.write_text(json.dumps(commands))
+            try:
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, "-m", "workbench.execute", str(self.script), str(out), str(commands_file)],
+                    cwd=self.script.parent,
+                    env={**os.environ, "PYTHONPATH": str(ROOT)},
+                    capture_output=True,
+                    text=True,
+                    timeout=RUN_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "output": "", "error": f"the build took more than {RUN_TIMEOUT} s"}
+            if out.exists():
+                return json.loads(out.read_text())
+            return {"ok": False, "output": proc.stdout, "error": proc.stderr or "the build crashed"}
 
 
 class Script(BaseModel):
@@ -92,6 +131,13 @@ class Selection(BaseModel):
 
 class Open(BaseModel):
     path: str
+
+
+class ManualCommand(BaseModel):
+    name: str
+    selection: dict | list[dict]
+    build_id: str
+    distance: float | None = None
 
 
 def create_app(bench: Workbench) -> FastAPI:
@@ -138,6 +184,22 @@ def create_app(bench: Workbench) -> FastAPI:
         result = await bench.build()
         if not mesh:
             result = {k: v for k, v in result.items() if k != "mesh"}
+        return result
+
+    @app.post("/api/manual-command")
+    async def post_manual_command(command: ManualCommand):
+        try:
+            result = await bench.apply_manual_command(
+                {"name": command.name, "selection": command.selection, "distance": command.distance},
+                command.build_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not result["ok"]:
+            detail = result.get("error", "manual command failed")
+            if result.get("output"):
+                detail += "\n\nCaptured Python output:\n" + result["output"]
+            raise HTTPException(422, detail)
         return result
 
     @app.get("/api/selection")

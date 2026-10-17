@@ -98,6 +98,63 @@ async function refreshBuild() {
   setStatus(`built · ${s.faces} faces · ${s.edges} edges · volume ${s.volume} mm³${s.valid ? "" : " · INVALID SOLID"}`);
 }
 
+async function runManualCommand(name) {
+  const multiFaceRemoval = name === "remove_fillet" || name === "remove_chamfer";
+  const expectedKind = name === "offset" || name === "remove_fillet" || name === "remove_chamfer" ? "face" : "edge";
+  if (
+    !selection.length ||
+    (!multiFaceRemoval && selection.length !== 1) ||
+    selection.some((item) => item.kind !== expectedKind) ||
+    !build
+  ) return;
+  const target = multiFaceRemoval ? selection : selection[0];
+  const command = { name, selection: target, build_id: build.build_id };
+  if (name !== "remove_fillet" && name !== "remove_chamfer") {
+    const distance = $("offset-distance");
+    const value = Number(distance.value);
+    const threshold = name === "offset" ? Math.abs(value) : value;
+    if (!distance.value || !Number.isFinite(value) || !distance.checkValidity() || threshold <= 0.01) {
+      distance.setCustomValidity(
+        name === "offset"
+          ? "Offset magnitude must be greater than 0.01 mm"
+          : "Distance must be greater than 0.01 mm",
+      );
+      distance.reportValidity();
+      distance.setCustomValidity("");
+      return;
+    }
+    command.distance = value;
+  }
+
+  setStatus("applying manual edit…");
+  const response = await fetch("/api/manual-command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(command),
+  });
+  const result = await response.json();
+  if (result.output) console.log("[Python]", result.output);
+  if (!response.ok) {
+    console.error("[Manual command failed]", result.detail || "manual edit failed");
+    $("error").textContent = result.detail || "manual edit failed";
+    $("error").hidden = false;
+    setStatus("manual edit failed", "error");
+    return;
+  }
+
+  $("error").hidden = true;
+  build = result;
+  render(result.mesh);
+  await setSelection([]);
+  const s = result.summary;
+  setStatus(`manual edit applied · ${s.faces} faces · ${s.edges} edges · volume ${s.volume} mm³${s.valid ? "" : " · INVALID SOLID"}`);
+}
+$("offset-feature").onclick = () => runManualCommand("offset");
+$("chamfer-feature").onclick = () => runManualCommand("chamfer");
+$("fillet-feature").onclick = () => runManualCommand("fillet");
+$("remove-fillet-feature").onclick = () => runManualCommand("remove_fillet");
+$("remove-chamfer-feature").onclick = () => runManualCommand("remove_chamfer");
+
 function viewerSize() {
   const r = $("viewer").getBoundingClientRect();
   return [Math.floor(r.width), Math.floor(r.height)];
@@ -206,6 +263,13 @@ function pick(x, y) {
 
 async function setSelection(items) {
   selection = items;
+  $("offset-feature").disabled = items.length !== 1 || items[0].kind !== "face";
+  $("chamfer-feature").disabled = items.length !== 1 || items[0].kind !== "edge";
+  $("fillet-feature").disabled = items.length !== 1 || items[0].kind !== "edge";
+  $("remove-fillet-feature").disabled =
+    !items.length || items.some((item) => item.kind !== "face" || !["cylinder", "torus"].includes(item.type));
+  $("remove-chamfer-feature").disabled =
+    !items.length || items.some((item) => item.kind !== "face" || item.type !== "plane");
   $("selection-list").textContent = items.length
     ? items.map((s) => `${s.kind} ${s.index}: ${JSON.stringify({ ...s, kind: undefined, index: undefined })}`).join("\n")
     : "nothing selected";

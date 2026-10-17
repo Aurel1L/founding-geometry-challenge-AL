@@ -20,6 +20,7 @@ import types
 from pathlib import Path
 
 from build123d import Edge, Face, Shape, Vector
+from ManualCommands import execute as execute_manual_command
 from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCP.GeomAbs import GeomAbs_CurveType, GeomAbs_SurfaceType
@@ -119,17 +120,19 @@ def _fake_ocp_vscode(shown: list) -> types.ModuleType:
     return module
 
 
-def run(script: Path) -> dict:
+def run(script: Path, manual_commands: list[dict] | None = None) -> dict:
     output = io.StringIO()
     shown = []
     sys.modules["ocp_vscode"] = _fake_ocp_vscode(shown)
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
             namespace = runpy.run_path(str(script), run_name="__main__")
-        result = namespace.get("result", shown[-1] if shown else None)
-        result = getattr(result, "part", result)  # show(builder) passes a BuildPart
-        if not isinstance(result, Shape):
-            raise ValueError("the script must assign its final shape to `result`, or call show() on it")
+            result = namespace.get("result", shown[-1] if shown else None)
+            result = getattr(result, "part", result)  # show(builder) passes a BuildPart
+            if not isinstance(result, Shape):
+                raise ValueError("the script must assign its final shape to `result`, or call show() on it")
+            for command in manual_commands or []:
+                result = execute_manual_command(result, command)
         return {"ok": True, "output": output.getvalue(), **describe(result)}
     except Exception:
         return {"ok": False, "output": output.getvalue(), "error": traceback.format_exc(limit=-3)}
@@ -137,5 +140,6 @@ def run(script: Path) -> dict:
 
 if __name__ == "__main__":
     script, out = Path(sys.argv[1]).resolve(), Path(sys.argv[2])
+    manual_commands = json.loads(Path(sys.argv[3]).read_text()) if len(sys.argv) > 3 else []
     sys.path.insert(0, str(script.parent))
-    out.write_text(json.dumps(run(script)))
+    out.write_text(json.dumps(run(script, manual_commands)))

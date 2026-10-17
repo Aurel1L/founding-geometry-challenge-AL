@@ -21,6 +21,15 @@
   <main>
     <section id="editor-pane"><textarea id="editor"></textarea></section>
     <section id="viewer-pane">
+      <div id="edit-tools" aria-label="Direct editing tools">
+        <label for="offset-distance">Distance / radius (mm)</label>
+        <input id="offset-distance" type="number" step="any" required aria-label="Offset distance in millimeters">
+        <button id="offset-feature" type="button" title="Extrude one selected planar face outward" disabled>Offset</button>
+        <button id="chamfer-feature" type="button" title="Add a chamfer to the selected edge" disabled>Add Chamfer</button>
+        <button id="remove-chamfer-feature" type="button" title="Remove the selected planar chamfer face" disabled>Remove Chamfer</button>
+        <button id="fillet-feature" type="button" title="Add a fillet to the selected edge" disabled>Add Fillet</button>
+        <button id="remove-fillet-feature" type="button" title="Remove the selected fillet" disabled>Remove Fillet</button>
+      </div>
       <div id="viewer"></div>
       <div id="selection">
         <div class="title">Selection <small>click a face or an edge, shift+click to add, Esc to clear</small></div>
