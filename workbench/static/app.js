@@ -97,10 +97,12 @@ async function refreshBuild() {
   setStatus("building…");
   const result = await (await fetch("/api/build")).json();
   if (!result.ok) {
+    console.error("[Build failed]", result.error || "build failed", result.output || "");
     showError(result.error + (result.output ? "\n" + result.output : ""));
     setStatus("build failed", "error");
     return;
   }
+  if (result.output?.includes("WARNING:")) console.warn("[Build warning]", result.output);
   hideError();
   build = result;
   render(result.mesh);
@@ -145,7 +147,12 @@ async function runManualCommand(name) {
     !build
   ) return;
   const target = multiFaceRemoval ? selection : selection[0];
-  const command = { name, selection: target, build_id: build.build_id };
+  const command = {
+    name,
+    selection: target,
+    build_id: build.build_id,
+    bounds: build.summary.bounding_box,
+  };
   if (name !== "remove_fillet" && name !== "remove_chamfer") {
     const distance = $("offset-distance");
     const value = Number(distance.value);
@@ -170,7 +177,8 @@ async function runManualCommand(name) {
     body: JSON.stringify(command),
   });
   const result = await response.json();
-  if (result.output) console.log("[Python]", result.output);
+  if (result.output?.includes("WARNING:")) console.warn("[Build warning]", result.output);
+  else if (result.output) console.log("[Python]", result.output);
   if (!response.ok) {
     console.error("[Manual command failed]", result.detail || "manual edit failed");
     showError(result.detail || "manual edit failed");

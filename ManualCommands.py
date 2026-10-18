@@ -7,26 +7,26 @@ from typing import Any
 
 from build123d import Edge, Face, Shape, Solid
 import OCP.BRepAlgoAPI as BRepAlgoAPI
-from OCP.BRep import BRep_Tool
 from OCP.BRepTools import BRepTools_ReShape
-from OCP.TopLoc import TopLoc_Location
-from ocp_tessellate.convert import export_three_cad_viewer_js
-from ocp_tessellate.ocp_utils import get_edges, get_faces
-
-GlobalEpsilon = 0.01
-
-
-def _viewer_faces(shape: Shape) -> list[Face]:
-    export_three_cad_viewer_js(None, shape, names=["result"])
-    location = TopLoc_Location()
-    return [
-        Face(face)
-        for face in get_faces(shape.wrapped)
-        if BRep_Tool.Triangulation_s(face, location) is not None
-    ]
-
+from workbench.manual_edits import (
+    GLOBAL_EPSILON as GlobalEpsilon,
+    edge_signature as _edge_signature,
+    face_signature as _face_signature,
+    resolve_geometric_selector as _resolve_geometric_selector,
+    selector_matches as _selector_matches,
+    viewer_edges as _viewer_edges,
+    viewer_faces as _viewer_faces,
+)
 
 def _selected_face(shape: Shape, selection: dict[str, Any]) -> Face:
+    topological_face = selection.get("topological_face")
+    if selection.get("kind") == "face" and isinstance(topological_face, Face):
+        return topological_face
+    if "selector" in selection:
+        resolved = _resolve_geometric_selector(shape, selection["selector"])
+        if not isinstance(resolved, Face):
+            raise ValueError("Geometric selector did not resolve to a face")
+        return resolved
     if selection.get("kind") != "face":
         raise ValueError("This command requires a selected face")
 
@@ -46,9 +46,15 @@ def _selected_faces(shape: Shape, selections: list[dict[str, Any]]) -> list[Face
     if any(selection.get("kind") != "face" for selection in selections):
         raise ValueError("This command requires only selected faces")
 
-    faces = _viewer_faces(shape)
     selected = []
     for selection in selections:
+        if "selector" in selection or "topological_face" in selection:
+            face = _selected_face(shape, selection)
+            if not any(face.is_same(existing) for existing in selected):
+                selected.append(face)
+            continue
+
+        faces = _viewer_faces(shape)
         index = selection.get("index")
         if not isinstance(index, int) or isinstance(index, bool):
             raise ValueError("A selected face has no valid index")
@@ -125,6 +131,14 @@ def propagate_face(shape: Shape, selection: dict[str, Any]) -> list[Face]:
 
 
 def _selected_edge(shape: Shape, selection: dict[str, Any]) -> Edge:
+    topological_edge = selection.get("topological_edge")
+    if selection.get("kind") == "edge" and isinstance(topological_edge, Edge):
+        return topological_edge
+    if "selector" in selection:
+        resolved = _resolve_geometric_selector(shape, selection["selector"])
+        if not isinstance(resolved, Edge):
+            raise ValueError("Geometric selector did not resolve to an edge")
+        return resolved
     if selection.get("kind") != "edge":
         raise ValueError("This command requires a selected edge")
 
@@ -132,15 +146,7 @@ def _selected_edge(shape: Shape, selection: dict[str, Any]) -> Edge:
     if not isinstance(index, int) or isinstance(index, bool):
         raise ValueError("The selected edge has no valid index")
 
-    export_three_cad_viewer_js(None, shape, names=["result"])
-    location = TopLoc_Location()
-    edges = []
-    for edge, face in get_edges(shape.wrapped, True):
-        triangulation = BRep_Tool.Triangulation_s(face, location)
-        if triangulation is not None and BRep_Tool.PolygonOnTriangulation_s(
-            edge, triangulation, location
-        ) is not None:
-            edges.append(Edge(edge))
+    edges = _viewer_edges(shape)
 
     if index < 0 or index >= len(edges):
         raise ValueError(f"Selected edge index {index} is out of range 0 to {len(edges) - 1}")

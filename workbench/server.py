@@ -17,12 +17,22 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from workbench.manual_edits import (
+    GEOMETRIC_SELECTOR,
+    LEGACY_SELECTOR,
+    MANUAL_JOURNAL_SCHEMA_VERSION,
+    TOPOLOGIC_SELECTOR,
+    ManualEditJournal,
+    command_from_operation,
+    operation_from_command,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "workbench" / "static"
@@ -36,11 +46,27 @@ class Workbench:
         STATE.mkdir(exist_ok=True)
         self.selection_file = STATE / "selection.json"
         self.manual_commands_file = STATE / "manual_commands.json"
-        if self.manual_commands_file.exists():
-            self._manual_commands_by_script = json.loads(self.manual_commands_file.read_text())
-        else:
-            self._manual_commands_by_script = {}
+        self._journal = ManualEditJournal(self.manual_commands_file, self._source_version)
+        self._journal.load()
+        self._manual_commands_by_script = self._journal.scripts
         self.open(script)
+
+    @staticmethod
+    def _source_version(script: Path) -> str | None:
+        if not script.is_file():
+            return None
+        return hashlib.sha256(script.read_text().encode()).hexdigest()[:12]
+
+    @classmethod
+    def _operation_from_command(cls, command: dict) -> dict:
+        return operation_from_command(command)
+
+    def _load_manual_journal(self, raw_journal: dict) -> tuple[dict[str, dict], bool]:
+        return self._journal.parse(raw_journal)
+
+    def _persist_manual_journal(self) -> None:
+        self._journal.scripts = self._manual_commands_by_script
+        self._journal.persist()
 
     def open(self, script: Path):
         self.script = script.resolve()
@@ -58,22 +84,36 @@ class Workbench:
         return hashlib.sha256(self.text().encode()).hexdigest()[:12]
 
     def manual_commands(self) -> list[dict]:
-        return self._manual_commands_by_script.get(str(self.script), [])
+        return self._journal.commands(self.script)
+
+    def manual_operations(self) -> list[dict]:
+        return self._journal.operations(self.script)
+
+    @staticmethod
+    def _command_from_operation(operation: dict) -> dict:
+        return command_from_operation(operation)
+
+    def _build_commands(self, operations: list[dict]) -> list[dict]:
+        return [self._command_from_operation(operation) for operation in operations]
 
     async def clear_manual_commands(self) -> dict:
         async with self._lock:
-            self._manual_commands_by_script.pop(str(self.script), None)
-            self.manual_commands_file.write_text(json.dumps(self._manual_commands_by_script, indent=2))
             result = await self._run_build([])
+            if not result["ok"]:
+                return result
+            self._journal.scripts = self._manual_commands_by_script
+            self._journal.clear(self.script)
+            self._manual_commands_by_script = self._journal.scripts
             build_id = self.build_id([])
             result["version"] = self.version()
             result["build_id"] = build_id
             self._build = (build_id, result)
             return result
 
-    def build_id(self, commands: list[dict] | None = None) -> str:
+    def build_id(self, operations: list[dict] | None = None) -> str:
+        current_operations = self.manual_operations() if operations is None else operations
         payload = json.dumps(
-            {"script": str(self.script), "version": self.version(), "commands": commands or self.manual_commands()},
+            {"script": str(self.script), "version": self.version(), "operations": current_operations},
             sort_keys=True,
         )
         return hashlib.sha256(payload.encode()).hexdigest()[:12]
@@ -81,11 +121,11 @@ class Workbench:
     async def build(self) -> dict:
         """Run the script once per version; later calls reuse the result."""
         async with self._lock:
-            commands = self.manual_commands()
-            build_id = self.build_id(commands)
+            operations = self.manual_operations()
+            build_id = self.build_id(operations)
             if self._build and self._build[0] == build_id:
                 return self._build[1]
-            result = await self._run_build(commands)
+            result = await self._run_build(self._build_commands(operations))
             result["version"] = self.version()
             result["build_id"] = build_id
             self._build = (build_id, result)
@@ -93,18 +133,19 @@ class Workbench:
 
     async def apply_manual_command(self, command: dict, expected_build_id: str) -> dict:
         async with self._lock:
-            commands = self.manual_commands()
-            if expected_build_id != self.build_id(commands):
+            operations = self.manual_operations()
+            if expected_build_id != self.build_id(operations):
                 raise ValueError("The displayed part changed; select the face again")
 
-            updated_commands = [*commands, command]
-            result = await self._run_build(updated_commands)
+            updated_operations = [*operations, self._operation_from_command(command)]
+            result = await self._run_build(self._build_commands(updated_operations))
             if not result["ok"]:
                 return result
 
-            self._manual_commands_by_script[str(self.script)] = updated_commands
-            self.manual_commands_file.write_text(json.dumps(self._manual_commands_by_script, indent=2))
-            build_id = self.build_id(updated_commands)
+            self._journal.scripts = self._manual_commands_by_script
+            self._journal.set_operations(self.script, self.version(), updated_operations)
+            self._manual_commands_by_script = self._journal.scripts
+            build_id = self.build_id(updated_operations)
             result["version"] = self.version()
             result["build_id"] = build_id
             self._build = (build_id, result)
@@ -149,6 +190,7 @@ class ManualCommand(BaseModel):
     selection: dict | list[dict]
     build_id: str
     distance: float | None = None
+    bounds: dict | None = None
 
 
 def create_app(bench: Workbench) -> FastAPI:
@@ -201,7 +243,12 @@ def create_app(bench: Workbench) -> FastAPI:
     async def post_manual_command(command: ManualCommand):
         try:
             result = await bench.apply_manual_command(
-                {"name": command.name, "selection": command.selection, "distance": command.distance},
+                {
+                    "name": command.name,
+                    "selection": command.selection,
+                    "distance": command.distance,
+                    "bounds": command.bounds,
+                },
                 command.build_id,
             )
         except ValueError as exc:
