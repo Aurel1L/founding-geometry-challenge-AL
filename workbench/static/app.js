@@ -28,6 +28,18 @@ function setStatus(text, kind = "") {
   $("status").className = kind;
 }
 
+function showError(message) {
+  $("error").textContent = message;
+  $("error").hidden = false;
+  $("error-close").hidden = false;
+}
+
+function hideError() {
+  $("error").hidden = true;
+  $("error-close").hidden = true;
+}
+$("error-close").onclick = hideError;
+
 async function loadScript() {
   const script = await (await fetch("/api/script")).json();
   $("path").textContent = script.path;
@@ -85,18 +97,43 @@ async function refreshBuild() {
   setStatus("building…");
   const result = await (await fetch("/api/build")).json();
   if (!result.ok) {
-    $("error").textContent = result.error + (result.output ? "\n" + result.output : "");
-    $("error").hidden = false;
+    showError(result.error + (result.output ? "\n" + result.output : ""));
     setStatus("build failed", "error");
     return;
   }
-  $("error").hidden = true;
+  hideError();
   build = result;
   render(result.mesh);
   setSelection([]);
   const s = result.summary;
   setStatus(`built · ${s.faces} faces · ${s.edges} edges · volume ${s.volume} mm³${s.valid ? "" : " · INVALID SOLID"}`);
 }
+
+async function clearManualCommands() {
+  if (editor.getValue() !== savedText) {
+    setStatus("save the script before clearing manual edits", "dirty");
+    return;
+  }
+  if (!confirm("Clear manual edits for this script? The Python source will not change.")) return;
+
+  setStatus("clearing manual edits…");
+  const response = await fetch("/api/manual-commands", { method: "DELETE" });
+  const result = await response.json();
+  if (!response.ok || !result.ok) {
+    const message = result.detail || result.error || "could not clear manual edits";
+    showError(message);
+    setStatus("clean failed", "error");
+    return;
+  }
+
+  hideError();
+  build = result;
+  render(result.mesh);
+  await setSelection([]);
+  const summary = result.summary;
+  setStatus(`manual edits cleared · ${summary.faces} faces · ${summary.edges} edges · volume ${summary.volume} mm³${summary.valid ? "" : " · INVALID SOLID"}`);
+}
+$("clear-manual-commands").onclick = clearManualCommands;
 
 async function runManualCommand(name) {
   const multiFaceRemoval = name === "remove_fillet" || name === "remove_chamfer";
@@ -136,13 +173,12 @@ async function runManualCommand(name) {
   if (result.output) console.log("[Python]", result.output);
   if (!response.ok) {
     console.error("[Manual command failed]", result.detail || "manual edit failed");
-    $("error").textContent = result.detail || "manual edit failed";
-    $("error").hidden = false;
+    showError(result.detail || "manual edit failed");
     setStatus("manual edit failed", "error");
     return;
   }
 
-  $("error").hidden = true;
+  hideError();
   build = result;
   render(result.mesh);
   await setSelection([]);

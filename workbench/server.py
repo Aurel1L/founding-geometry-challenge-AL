@@ -60,6 +60,17 @@ class Workbench:
     def manual_commands(self) -> list[dict]:
         return self._manual_commands_by_script.get(str(self.script), [])
 
+    async def clear_manual_commands(self) -> dict:
+        async with self._lock:
+            self._manual_commands_by_script.pop(str(self.script), None)
+            self.manual_commands_file.write_text(json.dumps(self._manual_commands_by_script, indent=2))
+            result = await self._run_build([])
+            build_id = self.build_id([])
+            result["version"] = self.version()
+            result["build_id"] = build_id
+            self._build = (build_id, result)
+            return result
+
     def build_id(self, commands: list[dict] | None = None) -> str:
         payload = json.dumps(
             {"script": str(self.script), "version": self.version(), "commands": commands or self.manual_commands()},
@@ -200,6 +211,13 @@ def create_app(bench: Workbench) -> FastAPI:
             if result.get("output"):
                 detail += "\n\nCaptured Python output:\n" + result["output"]
             raise HTTPException(422, detail)
+        return result
+
+    @app.delete("/api/manual-commands")
+    async def delete_manual_commands():
+        result = await bench.clear_manual_commands()
+        if not result["ok"]:
+            raise HTTPException(422, result.get("error", "build failed after clearing manual edits"))
         return result
 
     @app.get("/api/selection")

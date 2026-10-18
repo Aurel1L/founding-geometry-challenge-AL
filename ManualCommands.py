@@ -87,6 +87,43 @@ def _faces_are_connected(faces: list[Face]) -> bool:
     return True
 
 
+def _blend_radius(face: Face) -> float | None:
+    kind = face.geom_type.name.lower()
+    if kind == "cylinder":
+        return face.radius
+    if kind == "torus" and face.radii is not None:
+        return face.radii[1]
+    return None
+
+
+def propagate_face(shape: Shape, selection: dict[str, Any]) -> list[Face]:
+    """Expand a selected fillet face to connected blend faces of matching radius."""
+    seed = _selected_face(shape, selection)
+    seed_radius = _blend_radius(seed)
+    if seed_radius is None:
+        raise ValueError("Face propagation requires a cylindrical or toroidal fillet face")
+
+    candidates = [
+        face
+        for face in _viewer_faces(shape)
+        if (radius := _blend_radius(face)) is not None
+        and abs(radius - seed_radius) <= GlobalEpsilon
+    ]
+    propagated = [seed]
+    remaining = [face for face in candidates if not face.is_same(seed)]
+
+    changed = True
+    while changed:
+        changed = False
+        for candidate in remaining[:]:
+            if any(_faces_are_connected([face, candidate]) for face in propagated):
+                propagated.append(candidate)
+                remaining.remove(candidate)
+                changed = True
+
+    return propagated
+
+
 def _selected_edge(shape: Shape, selection: dict[str, Any]) -> Edge:
     if selection.get("kind") != "edge":
         raise ValueError("This command requires a selected edge")
@@ -167,7 +204,13 @@ def _remove_feature_faces(shape: Shape, faces: list[Face], feature: str) -> Shap
 
 def remove_fillet(shape: Shape, selections: list[dict[str, Any]]) -> Shape:
     """Remove connected cylindrical or toroidal fillet faces and heal the solid."""
-    faces = _selected_faces(shape, selections)
+    if not selections:
+        raise ValueError("Select at least one fillet face")
+    faces = (
+        propagate_face(shape, selections[0])
+        if len(selections) == 1
+        else _selected_faces(shape, selections)
+    )
     if any(face.geom_type.name.lower() not in ("cylinder", "torus") for face in faces):
         raise ValueError("Remove Fillet requires cylindrical or toroidal faces")
     return _remove_feature_faces(shape, faces, "fillet")

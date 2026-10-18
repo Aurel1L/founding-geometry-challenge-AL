@@ -18,11 +18,13 @@ main { flex: 1; display: grid; grid-template-columns: minmax(320px, 40%) 1fr; mi
 #edit-tools { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 8px; border-bottom: 1px solid #ddd; background: #fff; }
 #edit-tools label { color: #555; }
 #edit-tools input { width: 96px; min-width: 0; padding: 4px 6px; border: 1px solid #bbb; border-radius: 4px; font: inherit; }
+#clear-manual-commands { margin-left: auto; }
 #edit-tools button:disabled { cursor: not-allowed; opacity: 0.5; }
 #viewer { flex: 1; min-height: 0; overflow: hidden; }
 #selection { height: 150px; border-top: 1px solid #ddd; background: #fff; padding: 6px 10px; overflow: auto; }
 #selection .title { font-weight: 600; margin-bottom: 4px; }
 #selection small { font-weight: 400; color: #888; margin-left: 8px; }
 #selection-list { margin: 0; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; }
-#error { position: absolute; top: 12px; right: 12px; width: 66.667%; max-height: calc(100% - 24px); overflow: auto; overflow-wrap: anywhere; margin: 0; padding: 10px;
+#error { position: absolute; top: calc(12px + 1cm); right: 12px; width: 66.667%; max-height: calc(100% - 1cm - 24px); overflow: auto; overflow-wrap: anywhere; margin: 0; padding: 42px 10px 10px;
          background: #fff3f2; border: 1px solid #e8b4ae; color: #8c1d18; font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; z-index: 10; }
+#error-close { position: absolute; top: calc(20px + 1cm); right: 20px; z-index: 11; width: 28px; height: 28px; padding: 0; font-size: 18px; line-height: 1; }

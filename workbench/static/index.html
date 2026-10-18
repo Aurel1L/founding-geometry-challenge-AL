@@ -29,12 +29,14 @@
         <button id="remove-chamfer-feature" type="button" title="Remove the selected planar chamfer face" disabled>Remove Chamfer</button>
         <button id="fillet-feature" type="button" title="Add a fillet to the selected edge" disabled>Add Fillet</button>
         <button id="remove-fillet-feature" type="button" title="Remove the selected fillet" disabled>Remove Fillet</button>
+        <button id="clear-manual-commands" type="button" title="Revert manual edits for the current script">Revert edits</button>
       </div>
       <div id="viewer"></div>
       <div id="selection">
         <div class="title">Selection <small>click a face or an edge, shift+click to add, Esc to clear</small></div>
         <pre id="selection-list">nothing selected</pre>
       </div>
+      <button id="error-close" type="button" title="Close error" aria-label="Close error" hidden>&times;</button>
       <pre id="error" hidden></pre>
     </section>
   </main>
